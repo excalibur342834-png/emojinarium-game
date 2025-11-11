@@ -67,7 +67,6 @@ export class GameEngine {
         this.gameField = gameFieldElement;
     }
 
-    // Game object management
     createGameObject(emoji, x, y, isHost = false, network = null) {
         const placeholder = this.gameField.querySelector('.field-placeholder');
         if (placeholder) {
@@ -110,7 +109,6 @@ export class GameEngine {
         this.gameField.appendChild(object);
         this.gameObjects.set(objectId, object);
 
-        // Sync with network if host
         if (isHost && network) {
             const objectData = {
                 id: objectId,
@@ -193,7 +191,6 @@ export class GameEngine {
         }
     }
 
-    // Object manipulation
     addRotationHandler(object, handle) {
         let rotationIndicator = null;
 
@@ -284,7 +281,6 @@ export class GameEngine {
                 isDragging = false;
                 element.classList.remove('dragging');
                 
-                // Sync position with network
                 if (network) {
                     const objectData = {
                         id: parseInt(element.getAttribute('data-id')),
@@ -339,7 +335,6 @@ export class GameEngine {
                 resizeIndicator.textContent = `${newWidth}px`;
             }
 
-            // Sync size with network
             if (network) {
                 const objectData = {
                     id: parseInt(element.getAttribute('data-id')),
@@ -356,7 +351,6 @@ export class GameEngine {
         });
     }
 
-    // Utility methods
     showPlaceholder() {
         const placeholder = document.createElement('div');
         placeholder.className = 'field-placeholder';
