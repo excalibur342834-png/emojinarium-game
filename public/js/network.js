@@ -19,7 +19,6 @@ export class NetworkGame {
                 this.isConnected = true;
                 this.playerId = this.socket.id;
                 
-                // Запрашиваем создание комнаты на сервере
                 this.socket.emit('create_room', {
                     playerName: playerName
                 });
@@ -140,6 +139,12 @@ export class NetworkGame {
                 this.onChatMessage(data);
             }
         });
+
+        this.socket.on('player_scored', (data) => {
+            if (this.onPlayerScored) {
+                this.onPlayerScored(data);
+            }
+        });
     }
 
     setupErrorHandling(reject) {
@@ -154,7 +159,6 @@ export class NetworkGame {
         }, 5000);
     }
 
-    // ... остальные методы без изменений ...
     disconnect() {
         if (this.socket) {
             this.socket.disconnect();
@@ -198,7 +202,6 @@ export class NetworkGame {
         this.socket.emit('correct_answer', { playerId });
     }
 
-    // Event listeners
     onPlayersUpdate(callback) {
         this.onPlayersUpdate = callback;
     }
@@ -233,6 +236,10 @@ export class NetworkGame {
 
     onChatMessage(callback) {
         this.onChatMessage = callback;
+    }
+
+    onPlayerScored(callback) {
+        this.onPlayerScored = callback;
     }
 
     updatePlayerScore(playerId, points) {
