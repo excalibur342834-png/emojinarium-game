@@ -1,625 +1,104 @@
-<script>
-    class NetworkGame {
-        constructor() {
-            this.socket = null;
-            this.roomId = null;
-            this.playerId = null;
-            this.playerName = 'Игрок';
-            this.isConnected = false;
-            this.isHost = false;
-            this.players = new Map();
-            this.currentRoomId = null; // ← ДОБАВЛЕНО: запоминаем ID комнаты
-        }
-
-        connect(roomId, playerName) {
-            return new Promise((resolve, reject) => {
-                this.socket = io();
-                this.roomId = roomId;
-                this.playerName = playerName;
-                this.currentRoomId = roomId; // ← ЗАПОМИНАЕМ ID комнаты
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Эмоджинариум - Сетевая игра</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Mode Selection Modal -->
+    <div class="modal" id="modeModal">
+        <div class="modal-content">
+            <h2>Выберите режим игры</h2>
+            <div class="mode-buttons">
+                <button class="mode-btn active" data-mode="single">Одиночная игра</button>
+                <button class="mode-btn" data-mode="network">Сетевая игра</button>
+            </div>
+            
+            <div class="server-settings" id="serverSettings">
+                <div class="form-group">
+                    <label for="playerName">Ваше имя:</label>
+                    <input type="text" id="playerName" placeholder="Введите ваше имя" value="Игрок">
+                </div>
                 
-                this.socket.on('connect', () => {
-                    this.isConnected = true;
-                    this.playerId = this.socket.id;
+                <div class="room-actions">
+                    <div class="form-group">
+                        <label for="roomId">ID комнаты:</label>
+                        <input type="text" id="roomId" placeholder="Введите ID комнаты">
+                    </div>
                     
-                    this.socket.emit('join_room', {
-                        roomId: roomId,
-                        playerName: playerName
-                    });
-                    
-                    resolve({
-                        success: true,
-                        playerId: this.playerId,
-                        isHost: false,
-                        roomId: roomId
-                    });
-                });
+                    <div class="action-buttons">
+                        <button class="action-btn create-room-btn" id="createRoomBtn">Создать комнату</button>
+                        <button class="action-btn join-room-btn" id="joinRoomBtn">Присоединиться</button>
+                    </div>
+                </div>
                 
-                this.socket.on('player_joined', (data) => {
-                    this.players.clear();
-                    data.players.forEach(player => {
-                        this.players.set(player.id, player);
-                        if (player.id === this.playerId) {
-                            this.isHost = player.isHost;
-                        }
-                    });
-                    
-                    if (this.onPlayersUpdate) {
-                        this.onPlayersUpdate(Array.from(this.players.values()));
-                    }
-                });
-
-                // ДОБАВЛЕНО: Получение состояния комнаты
-                this.socket.on('room_state', (data) => {
-                    if (this.onRoomState) {
-                        this.onRoomState(data);
-                    }
-                });
-
-                // ДОБАВЛЕНО: Синхронизация игровых объектов
-                this.socket.on('game_object_added', (data) => {
-                    if (this.onGameObjectAdded) {
-                        this.onGameObjectAdded(data.object);
-                    }
-                });
-
-                this.socket.on('game_object_removed', (data) => {
-                    if (this.onGameObjectRemoved) {
-                        this.onGameObjectRemoved(data.objectId);
-                    }
-                });
-
-                this.socket.on('game_object_updated', (data) => {
-                    if (this.onGameObjectUpdated) {
-                        this.onGameObjectUpdated(data.object);
-                    }
-                });
-
-                this.socket.on('clear_game_field', (data) => {
-                    if (this.onClearGameField) {
-                        this.onClearGameField();
-                    }
-                });
-                
-                this.socket.on('connect_error', (error) => {
-                    reject(error);
-                });
-                
-                setTimeout(() => {
-                    if (!this.isConnected) {
-                        reject(new Error('Connection timeout'));
-                    }
-                }, 5000);
-            });
-        }
-
-        disconnect() {
-            if (this.socket) {
-                this.socket.disconnect();
-            }
-            this.isConnected = false;
-            this.players.clear();
-            // НЕ очищаем currentRoomId чтобы можно было переподключиться
-        }
-
-        // ДОБАВЛЕНО: Методы для синхронизации игровых объектов
-        sendGameObjectAdded(object) {
-            if (!this.isConnected || !this.socket) return;
-            this.socket.emit('game_object_added', { object });
-        }
-
-        sendGameObjectRemoved(objectId) {
-            if (!this.isConnected || !this.socket) return;
-            this.socket.emit('game_object_removed', { objectId });
-        }
-
-        sendGameObjectUpdated(object) {
-            if (!this.isConnected || !this.socket) return;
-            this.socket.emit('game_object_updated', { object });
-        }
-
-        sendClearGameField() {
-            if (!this.isConnected || !this.socket) return;
-            this.socket.emit('clear_game_field', {});
-        }
-
-        sendMessage(message) {
-            if (!this.isConnected || !this.socket) return;
+                <div id="networkStatus" class="status-message status-waiting">
+                    Выберите действие...
+                </div>
+            </div>
             
-            this.socket.emit('chat_message', {
-                message: message
-            });
-        }
+            <button class="start-btn" id="startBtn">Начать одиночную игру</button>
+        </div>
+    </div>
 
-        startGame() {
-            if (!this.isConnected || !this.socket || !this.isHost) return;
+    <!-- Game Interface -->
+    <div class="app">
+        <!-- Game Header -->
+        <div class="game-header" id="gameHeader">
+            <div class="header-top">
+                <div class="game-title">🎭 Эмоджинариум</div>
+                <div class="game-controls">
+                    <button class="control-btn clear-field-btn" id="clearFieldBtn">Очистить поле</button>
+                    <button class="control-btn new-movie-btn" id="newMovieBtn">Новый фильм</button>
+                    <button class="control-btn disconnect-btn" id="disconnectBtn">Отключиться</button>
+                </div>
+            </div>
             
-            this.socket.emit('start_game', {});
-        }
+            <div class="movie-display" id="movieDisplay">
+                <div class="movie-title" id="movieTitle">Загрузка фильма...</div>
+                <div class="movie-year" id="movieYear"></div>
+                <div class="loading-movie" id="loadingMovie">Получаем фильм из топов Кинопоиска...</div>
+            </div>
+        </div>
 
-        sendCorrectAnswer(playerId) {
-            if (!this.isConnected || !this.socket || !this.isHost) return;
+        <!-- Game Area -->
+        <div class="container" id="gameContainer">
+            <div class="menu" id="emojiMenu">
+                <h2>📚 Библиотека эмодзи</h2>
+                <div class="sections-container" id="sectionsContainer"></div>
+            </div>
             
-            this.socket.emit('correct_answer', {
-                playerId: playerId
-            });
-        }
+            <div class="game-field" id="gameField">
+                <div class="field-placeholder">
+                    <div class="icon">🎬</div>
+                    <div>Перетащите эмодзи сюда, чтобы составить сцену из фильма!</div>
+                </div>
+            </div>
 
-        onMessage(callback) {
-            if (this.socket) {
-                this.socket.on('chat_message', (data) => {
-                    callback(data);
-                });
-            }
-        }
+            <!-- Chat Section -->
+            <div class="chat-section" id="chatSection">
+                <div class="chat-header">💬 Чат игры</div>
+                <div class="players-list" id="playersList"></div>
+                <div class="chat-messages" id="chatMessages"></div>
+                <div class="chat-input-container">
+                    <input type="text" class="chat-input" id="chatInput" placeholder="Напишите ваш вариант ответа...">
+                    <button class="send-btn" id="sendBtn">Отправить</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-        onPlayersUpdate(callback) {
-            this.onPlayersUpdate = callback;
-        }
+    <div class="instructions" id="instructions">
+        <p>🎯 <strong>Создайте сцену из фильма используя эмодзи!</strong></p>
+        <p>✨ Нажмите на категорию чтобы открыть эмодзи • 🖱️ Перетаскивайте эмодзи на поле • 🔄 Перемещайте эмодзи мышью</p>
+        <p>🔍 Колесико мыши на эмодзи - изменение размера • ⟳ Зажмите и тяните ручку вращения для поворота • ❌ Двойной клик удаляет эмодзи</p>
+        <p>📚 В каждой игре доступны 20 случайных эмодзи из каждой категории • ESC - закрыть открытую секцию</p>
+        <p>🎬 Фильмы загружаются из топов Кинопоиска</p>
+    </div>
 
-        onGameStart(callback) {
-            if (this.socket) {
-                this.socket.on('game_started', (data) => {
-                    callback(data);
-                });
-            }
-        }
-
-        onMovieReveal(callback) {
-            if (this.socket) {
-                this.socket.on('movie_reveal', (data) => {
-                    callback(data);
-                });
-            }
-        }
-
-        // ДОБАВЛЕНО: Колбэки для синхронизации
-        onRoomState(callback) {
-            this.onRoomState = callback;
-        }
-
-        onGameObjectAdded(callback) {
-            this.onGameObjectAdded = callback;
-        }
-
-        onGameObjectRemoved(callback) {
-            this.onGameObjectRemoved = callback;
-        }
-
-        onGameObjectUpdated(callback) {
-            this.onGameObjectUpdated = callback;
-        }
-
-        onClearGameField(callback) {
-            this.onClearGameField = callback;
-        }
-
-        updatePlayerScore(playerId, points) {
-            const player = this.players.get(playerId);
-            if (player) {
-                player.score += points;
-            }
-        }
-
-        getPlayers() {
-            return Array.from(this.players.values());
-        }
-
-        // ДОБАВЛЕНО: Получение ID комнаты для переподключения
-        getCurrentRoomId() {
-            return this.currentRoomId;
-        }
-    }
-
-    class EmojinariumGame {
-        constructor() {
-            this.network = new NetworkGame();
-            this.gameMode = 'single';
-            this.isHost = false;
-            
-            this.gameField = document.getElementById('gameField');
-            this.sectionsContainer = document.getElementById('sectionsContainer');
-            this.movieTitle = document.getElementById('movieTitle');
-            this.movieYear = document.getElementById('movieYear');
-            this.loadingMovie = document.getElementById('loadingMovie');
-            this.movieDisplay = document.getElementById('movieDisplay');
-            this.emojiMenu = document.getElementById('emojiMenu');
-            this.chatSection = document.getElementById('chatSection');
-            this.chatMessages = document.getElementById('chatMessages');
-            this.chatInput = document.getElementById('chatInput');
-            this.sendBtn = document.getElementById('sendBtn');
-            this.playersList = document.getElementById('playersList');
-            this.roomIdInput = document.getElementById('roomId');
-            
-            this.objectCounter = 0;
-            this.currentMovie = null;
-            this.currentExpandedSection = null;
-            this.sectionOrder = [];
-            this.isRotating = false;
-            this.rotationStartAngle = 0;
-            this.rotationCurrentAngle = 0;
-            this.gameObjects = new Map(); // ← ДОБАВЛЕНО: храним объекты
-            
-            this.emojiCategories = [/* ... ваш список эмодзи ... */];
-
-            this.initModal();
-        }
-
-        initModal() {
-            const modal = document.getElementById('modeModal');
-            const modeBtns = document.querySelectorAll('.mode-btn');
-            const serverSettings = document.getElementById('serverSettings');
-            const startBtn = document.getElementById('startBtn');
-            const statusElement = document.getElementById('networkStatus');
-            const createRoomBtn = document.getElementById('createRoomBtn');
-            const joinRoomBtn = document.getElementById('joinRoomBtn');
-
-            // ДОБАВЛЕНО: Восстановление ID комнаты при переподключении
-            const savedRoomId = this.network.getCurrentRoomId();
-            if (savedRoomId) {
-                this.roomIdInput.value = savedRoomId;
-            }
-
-            modeBtns.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    modeBtns.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    this.gameMode = btn.dataset.mode;
-                    
-                    if (this.gameMode === 'network') {
-                        serverSettings.classList.add('active');
-                        statusElement.textContent = 'Выберите действие...';
-                        statusElement.className = 'status-message status-waiting';
-                        
-                        // ДОБАВЛЕНО: Показываем кнопку "Скопировать ID" если есть сохраненная комната
-                        if (savedRoomId) {
-                            this.showCopyRoomIdButton();
-                        }
-                    } else {
-                        serverSettings.classList.remove('active');
-                    }
-                });
-            });
-
-            // ДОБАВЛЕНО: Кнопка копирования ID комнаты
-            this.showCopyRoomIdButton = () => {
-                const copyBtn = document.createElement('button');
-                copyBtn.className = 'action-btn copy-room-btn';
-                copyBtn.textContent = '📋 Скопировать ID комнаты';
-                copyBtn.style.background = '#6f42c1';
-                copyBtn.style.marginTop = '10px';
-                copyBtn.addEventListener('click', () => {
-                    navigator.clipboard.writeText(savedRoomId).then(() => {
-                        statusElement.textContent = 'ID комнаты скопирован!';
-                        setTimeout(() => {
-                            statusElement.textContent = 'Выберите действие...';
-                        }, 2000);
-                    });
-                });
-                
-                const actionButtons = document.querySelector('.action-buttons');
-                if (actionButtons && !document.querySelector('.copy-room-btn')) {
-                    actionButtons.parentNode.appendChild(copyBtn);
-                }
-            };
-
-            // Создание комнаты
-            createRoomBtn.addEventListener('click', async () => {
-                const playerName = document.getElementById('playerName').value;
-                let roomId = this.roomIdInput.value.trim();
-
-                if (!roomId) {
-                    roomId = 'room_' + Math.random().toString(36).substr(2, 8);
-                    this.roomIdInput.value = roomId;
-                }
-
-                if (!playerName) {
-                    statusElement.textContent = 'Введите ваше имя!';
-                    return;
-                }
-
-                statusElement.textContent = 'Создаем комнату...';
-                createRoomBtn.disabled = true;
-                joinRoomBtn.disabled = true;
-
-                try {
-                    const result = await this.network.connect(roomId, playerName);
-                    
-                    if (result.success) {
-                        this.isHost = true;
-                        statusElement.textContent = `Комната создана! ID: ${roomId}`;
-                        statusElement.className = 'status-message status-connected';
-                        
-                        this.roomIdInput.disabled = true;
-                        this.showCopyRoomIdButton();
-                        
-                        setTimeout(() => {
-                            this.startNetworkGame();
-                        }, 2000);
-                    }
-                } catch (error) {
-                    statusElement.textContent = 'Ошибка создания комнаты!';
-                    createRoomBtn.disabled = false;
-                    joinRoomBtn.disabled = false;
-                }
-            });
-
-            // Присоединение к комнате
-            joinRoomBtn.addEventListener('click', async () => {
-                const roomId = this.roomIdInput.value.trim();
-                const playerName = document.getElementById('playerName').value;
-
-                if (!roomId) {
-                    statusElement.textContent = 'Введите ID комнаты!';
-                    return;
-                }
-
-                if (!playerName) {
-                    statusElement.textContent = 'Введите ваше имя!';
-                    return;
-                }
-
-                statusElement.textContent = 'Присоединяемся к комнате...';
-                createRoomBtn.disabled = true;
-                joinRoomBtn.disabled = true;
-
-                try {
-                    const result = await this.network.connect(roomId, playerName);
-                    
-                    if (result.success) {
-                        this.isHost = false;
-                        statusElement.textContent = 'Успешно присоединились!';
-                        statusElement.className = 'status-message status-connected';
-                        
-                        setTimeout(() => {
-                            this.startNetworkGame();
-                        }, 1000);
-                    }
-                } catch (error) {
-                    statusElement.textContent = 'Не удалось присоединиться! Проверьте ID комнаты.';
-                    createRoomBtn.disabled = false;
-                    joinRoomBtn.disabled = false;
-                }
-            });
-
-            startBtn.addEventListener('click', async () => {
-                if (this.gameMode === 'single') {
-                    this.startSingleGame();
-                }
-            });
-        }
-
-        async startNetworkGame() {
-            document.getElementById('modeModal').style.display = 'none';
-            document.getElementById('gameHeader').style.display = 'block';
-            document.getElementById('gameContainer').style.display = 'flex';
-            document.getElementById('instructions').classList.add('active');
-            
-            if (this.isHost) {
-                this.emojiMenu.classList.remove('hidden');
-                this.chatSection.classList.add('active');
-                await this.generateNewMovie();
-                this.initSections();
-            } else {
-                this.emojiMenu.classList.add('hidden');
-                this.chatSection.classList.add('active');
-                this.movieDisplay.style.display = 'none';
-                this.createPlayerPlaceholder();
-            }
-            
-            this.initEventListeners();
-            this.initNetworkListeners();
-            this.updatePlayersList();
-        }
-
-        initNetworkListeners() {
-            // ... существующие обработчики ...
-
-            // ДОБАВЛЕНО: Синхронизация игрового состояния
-            this.network.onRoomState((data) => {
-                if (data.movie && this.isHost === false) {
-                    this.currentMovie = data.movie;
-                }
-                
-                // Восстанавливаем игровые объекты
-                if (data.gameObjects && data.gameObjects.length > 0) {
-                    data.gameObjects.forEach(obj => {
-                        this.createGameObjectFromData(obj);
-                    });
-                }
-            });
-
-            this.network.onGameObjectAdded((object) => {
-                this.createGameObjectFromData(object);
-            });
-
-            this.network.onGameObjectRemoved((objectId) => {
-                const object = this.gameObjects.get(objectId);
-                if (object) {
-                    object.remove();
-                    this.gameObjects.delete(objectId);
-                }
-            });
-
-            this.network.onGameObjectUpdated((object) => {
-                const existingObject = this.gameObjects.get(object.id);
-                if (existingObject) {
-                    this.updateGameObjectFromData(existingObject, object);
-                }
-            });
-
-            this.network.onClearGameField(() => {
-                this.clearGameField();
-            });
-        }
-
-        // ДОБАВЛЕНО: Создание объекта из данных
-        createGameObjectFromData(objectData) {
-            if (this.gameObjects.has(objectData.id)) return;
-
-            const object = document.createElement('div');
-            object.className = 'game-object';
-            object.setAttribute('data-id', objectData.id);
-            object.setAttribute('data-rotation', objectData.rotation);
-            object.textContent = objectData.emoji;
-            object.style.fontSize = objectData.fontSize + 'px';
-            object.style.width = objectData.width + 'px';
-            object.style.height = objectData.height + 'px';
-            object.style.left = objectData.left + 'px';
-            object.style.top = objectData.top + 'px';
-            object.style.transform = `rotate(${objectData.rotation}deg)`;
-
-            const placeholder = this.gameField.querySelector('.field-placeholder');
-            if (placeholder) {
-                placeholder.remove();
-            }
-
-            const controls = document.createElement('div');
-            controls.className = 'object-controls';
-            
-            const rotateHandle = document.createElement('div');
-            rotateHandle.className = 'rotate-handle';
-            rotateHandle.title = 'Зажмите и тяните для вращения';
-            
-            this.addRotationHandler(object, rotateHandle);
-            controls.appendChild(rotateHandle);
-            object.appendChild(controls);
-
-            // Только хост может управлять объектами
-            if (this.isHost) {
-                this.makeDraggable(object);
-                this.addResizeHandler(object);
-            }
-
-            this.gameField.appendChild(object);
-            this.gameObjects.set(objectData.id, object);
-        }
-
-        // ДОБАВЛЕНО: Обновление объекта из данных
-        updateGameObjectFromData(object, objectData) {
-            object.style.left = objectData.left + 'px';
-            object.style.top = objectData.top + 'px';
-            object.style.width = objectData.width + 'px';
-            object.style.height = objectData.height + 'px';
-            object.style.fontSize = objectData.fontSize + 'px';
-            object.style.transform = `rotate(${objectData.rotation}deg)`;
-            object.setAttribute('data-rotation', objectData.rotation);
-        }
-
-        // ОБНОВЛЕНО: Создание игрового объекта с синхронизацией
-        createGameObject(emoji, x, y) {
-            const placeholder = this.gameField.querySelector('.field-placeholder');
-            if (placeholder) {
-                placeholder.remove();
-            }
-
-            const objectId = ++this.objectCounter;
-            const object = document.createElement('div');
-            object.className = 'game-object';
-            object.setAttribute('data-id', objectId);
-            object.setAttribute('data-rotation', '0');
-            object.textContent = emoji;
-            object.style.fontSize = '50px';
-            object.style.width = '90px';
-            object.style.height = '90px';
-
-            const rect = this.gameField.getBoundingClientRect();
-            const posX = x - rect.left - 45;
-            const posY = y - rect.top - 45;
-
-            object.style.left = `${Math.max(20, posX)}px`;
-            object.style.top = `${Math.max(20, posY)}px`;
-
-            const controls = document.createElement('div');
-            controls.className = 'object-controls';
-            
-            const rotateHandle = document.createElement('div');
-            rotateHandle.className = 'rotate-handle';
-            rotateHandle.title = 'Зажмите и тяните для вращения';
-            
-            this.addRotationHandler(object, rotateHandle);
-            controls.appendChild(rotateHandle);
-            object.appendChild(controls);
-
-            this.makeDraggable(object);
-            this.addResizeHandler(object);
-            this.gameField.appendChild(object);
-            this.gameObjects.set(objectId, object);
-
-            // ДОБАВЛЕНО: Синхронизация с другими игроками
-            if (this.gameMode === 'network' && this.isHost) {
-                const objectData = {
-                    id: objectId,
-                    emoji: emoji,
-                    left: parseInt(object.style.left),
-                    top: parseInt(object.style.top),
-                    width: parseInt(object.style.width),
-                    height: parseInt(object.style.height),
-                    fontSize: parseInt(object.style.fontSize),
-                    rotation: 0
-                };
-                this.network.sendGameObjectAdded(objectData);
-            }
-
-            return object;
-        }
-
-        // ОБНОВЛЕНО: Удаление объекта с синхронизацией
-        removeGameObject(object) {
-            const objectId = parseInt(object.getAttribute('data-id'));
-            object.remove();
-            this.gameObjects.delete(objectId);
-
-            // ДОБАВЛЕНО: Синхронизация с другими игроками
-            if (this.gameMode === 'network' && this.isHost) {
-                this.network.sendGameObjectRemoved(objectId);
-            }
-
-            if (this.gameField.querySelectorAll('.game-object').length === 0) {
-                this.showPlaceholder();
-            }
-        }
-
-        // ОБНОВЛЕНО: Очистка поля с синхронизацией
-        clearGameField() {
-            this.gameField.innerHTML = '';
-            this.gameObjects.clear();
-            this.objectCounter = 0;
-            this.showPlaceholder();
-
-            // ДОБАВЛЕНО: Синхронизация с другими игроками
-            if (this.gameMode === 'network' && this.isHost) {
-                this.network.sendClearGameField();
-            }
-        }
-
-        // ОБНОВЛЕНО: Обработчик двойного клика
-        handleDoubleClick(e) {
-            if (e.detail === 2) {
-                const gameObject = e.target.closest('.game-object');
-                if (gameObject) {
-                    this.removeGameObject(gameObject);
-                }
-            }
-        }
-
-        // ... остальные методы без изменений ...
-    }
-
-    // Добавьте CSS для кнопки копирования
-    const style = document.createElement('style');
-    style.textContent = `
-        .copy-room-btn {
-            background: #6f42c1 !important;
-            color: white !important;
-        }
-        .copy-room-btn:hover {
-            background: #5a32a3 !important;
-        }
-    `;
-    document.head.appendChild(style);
-
-    document.addEventListener('DOMContentLoaded', () => {
-        new EmojinariumGame();
-    });
-</script>
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
