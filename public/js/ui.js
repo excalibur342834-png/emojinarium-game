@@ -9,7 +9,8 @@ export class UIManager {
         this.sectionsContainer = sectionsContainer;
     }
 
-    initSections(emojiCategories, dragHandlers) {
+    // Section management
+    initSections(emojiCategories, onEmojiDrag) {
         this.sectionsContainer.innerHTML = '';
         this.sectionOrder = [];
         
@@ -28,20 +29,19 @@ export class UIManager {
             const sectionContent = document.createElement('div');
             sectionContent.className = 'section-content';
             
-            const randomEmojis = this.getRandomEmojis(category.emojis, 20);
-            
             for (let i = 0; i < 20; i++) {
                 const menuItem = document.createElement('div');
                 menuItem.className = 'menu-item';
                 menuItem.setAttribute('data-type', `emoji-${index}-${i}`);
                 menuItem.setAttribute('draggable', 'true');
-                menuItem.textContent = randomEmojis[i] || '⬜';
+                menuItem.textContent = '⬜';
                 
+                // Add drag event listeners
                 menuItem.addEventListener('dragstart', (e) => {
-                    dragHandlers.handleDragStart(e);
+                    if (onEmojiDrag) onEmojiDrag.handleDragStart(e);
                 });
                 menuItem.addEventListener('dragend', (e) => {
-                    dragHandlers.handleDragEnd(e);
+                    if (onEmojiDrag) onEmojiDrag.handleDragEnd(e);
                 });
                 
                 sectionContent.appendChild(menuItem);
@@ -52,6 +52,7 @@ export class UIManager {
             this.sectionsContainer.appendChild(section);
         });
 
+        // Add click listeners for section headers
         this.sectionsContainer.addEventListener('click', (e) => {
             if (e.target.classList.contains('section-header')) {
                 this.toggleSection(e.target);
@@ -138,6 +139,7 @@ export class UIManager {
         }
     }
 
+    // Modal management
     initModal(onCreateRoom, onJoinRoom, onStartSingleGame) {
         const modal = document.getElementById('modeModal');
         const modeBtns = document.querySelectorAll('.mode-btn');
@@ -149,6 +151,7 @@ export class UIManager {
         const roomIdInput = document.getElementById('roomId');
         const playerNameInput = document.getElementById('playerName');
 
+        // Restore room ID if exists
         const savedRoomId = localStorage.getItem('lastRoomId');
         if (savedRoomId) {
             roomIdInput.value = savedRoomId;
@@ -164,14 +167,26 @@ export class UIManager {
                     serverSettings.classList.add('active');
                     statusElement.textContent = 'Выберите действие...';
                     statusElement.className = 'status-message status-waiting';
+                    
+                    // Show copy button if saved room exists
+                    if (savedRoomId) {
+                        this.showCopyRoomIdButton(savedRoomId, statusElement);
+                    }
                 } else {
                     serverSettings.classList.remove('active');
                 }
             });
         });
 
+        // Create room
         createRoomBtn.addEventListener('click', async () => {
-            const playerName = playerNameInput.value.trim();
+            const playerName = playerNameInput.value;
+            let roomId = roomIdInput.value.trim();
+
+            if (!roomId) {
+                roomId = 'room_' + Math.random().toString(36).substr(2, 8);
+                roomIdInput.value = roomId;
+            }
 
             if (!playerName) {
                 statusElement.textContent = 'Введите ваше имя!';
@@ -183,18 +198,18 @@ export class UIManager {
             joinRoomBtn.disabled = true;
 
             try {
-                await onCreateRoom(playerName, statusElement);
+                await onCreateRoom(roomId, playerName, statusElement, roomIdInput);
             } catch (error) {
                 statusElement.textContent = 'Ошибка создания комнаты!';
-                statusElement.className = 'status-message status-waiting';
                 createRoomBtn.disabled = false;
                 joinRoomBtn.disabled = false;
             }
         });
 
+        // Join room
         joinRoomBtn.addEventListener('click', async () => {
             const roomId = roomIdInput.value.trim();
-            const playerName = playerNameInput.value.trim();
+            const playerName = playerNameInput.value;
 
             if (!roomId) {
                 statusElement.textContent = 'Введите ID комнаты!';
@@ -213,30 +228,21 @@ export class UIManager {
             try {
                 await onJoinRoom(roomId, playerName, statusElement);
             } catch (error) {
-                statusElement.textContent = error.message || 'Не удалось присоединиться! Проверьте ID комнаты.';
-                statusElement.className = 'status-message status-waiting';
+                statusElement.textContent = 'Не удалось присоединиться! Проверьте ID комнаты.';
                 createRoomBtn.disabled = false;
                 joinRoomBtn.disabled = false;
             }
         });
 
+        // Start single game
         startBtn.addEventListener('click', () => {
-            const playerName = playerNameInput.value.trim() || 'Игрок';
-            onStartSingleGame(playerName);
+            onStartSingleGame();
         });
     }
 
-    showRoomCreated(roomId, statusElement) {
-        statusElement.textContent = `Комната создана! ID: ${roomId}`;
-        statusElement.className = 'status-message status-connected';
-        this.showCopyRoomIdButton(roomId, statusElement);
-    }
-
     showCopyRoomIdButton(roomId, statusElement) {
-        const oldBtn = document.querySelector('.copy-room-btn');
-        if (oldBtn) {
-            oldBtn.remove();
-        }
+        const existingBtn = document.querySelector('.copy-room-btn');
+        if (existingBtn) return;
 
         const copyBtn = document.createElement('button');
         copyBtn.className = 'action-btn copy-room-btn';
@@ -246,16 +252,8 @@ export class UIManager {
             navigator.clipboard.writeText(roomId).then(() => {
                 statusElement.textContent = 'ID комнаты скопирован!';
                 setTimeout(() => {
-                    statusElement.textContent = `Комната создана! ID: ${roomId}`;
+                    statusElement.textContent = 'Выберите действие...';
                 }, 2000);
-            }).catch(() => {
-                const tempInput = document.createElement('input');
-                tempInput.value = roomId;
-                document.body.appendChild(tempInput);
-                tempInput.select();
-                document.execCommand('copy');
-                document.body.removeChild(tempInput);
-                statusElement.textContent = 'ID скопирован!';
             });
         });
         
@@ -265,32 +263,7 @@ export class UIManager {
         }
     }
 
-    initGameControls(onNewMovie, onClearField, onDisconnect, isHost = false) {
-        const newMovieBtn = document.getElementById('newMovieBtn');
-        const clearFieldBtn = document.getElementById('clearFieldBtn');
-        const disconnectBtn = document.getElementById('disconnectBtn');
-
-        newMovieBtn.replaceWith(newMovieBtn.cloneNode(true));
-        clearFieldBtn.replaceWith(clearFieldBtn.cloneNode(true));
-        disconnectBtn.replaceWith(disconnectBtn.cloneNode(true));
-
-        const newNewMovieBtn = document.getElementById('newMovieBtn');
-        const newClearFieldBtn = document.getElementById('clearFieldBtn');
-        const newDisconnectBtn = document.getElementById('disconnectBtn');
-
-        if (isHost) {
-            newNewMovieBtn.style.display = 'block';
-            newClearFieldBtn.style.display = 'block';
-            newNewMovieBtn.addEventListener('click', onNewMovie);
-            newClearFieldBtn.addEventListener('click', onClearField);
-        } else {
-            newNewMovieBtn.style.display = 'none';
-            newClearFieldBtn.style.display = 'none';
-        }
-
-        newDisconnectBtn.addEventListener('click', onDisconnect);
-    }
-
+    // Chat management
     initChat(onSendMessage) {
         const sendBtn = document.getElementById('sendBtn');
         const chatInput = document.getElementById('chatInput');
@@ -367,6 +340,14 @@ export class UIManager {
         });
     }
 
+    // Game controls
+    initGameControls(onNewMovie, onClearField, onDisconnect) {
+        document.getElementById('newMovieBtn').addEventListener('click', onNewMovie);
+        document.getElementById('clearFieldBtn').addEventListener('click', onClearField);
+        document.getElementById('disconnectBtn').addEventListener('click', onDisconnect);
+    }
+
+    // Movie display
     updateMovieDisplay(movie) {
         const movieTitle = document.getElementById('movieTitle');
         const movieYear = document.getElementById('movieYear');
@@ -385,6 +366,7 @@ export class UIManager {
         movieYear.style.display = show ? 'none' : 'block';
     }
 
+    // Utility methods
     showScreen(screen) {
         const modal = document.getElementById('modeModal');
         const gameHeader = document.getElementById('gameHeader');
