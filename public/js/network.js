@@ -10,41 +10,7 @@ export class NetworkGame {
         this.currentRoomId = null;
     }
 
-    createRoom(playerName) {
-        return new Promise((resolve, reject) => {
-            this.socket = io();
-            this.playerName = playerName;
-            
-            this.socket.on('connect', () => {
-                this.isConnected = true;
-                this.playerId = this.socket.id;
-                
-                this.socket.emit('create_room', {
-                    playerName: playerName
-                });
-            });
-            
-            this.socket.on('room_created', (data) => {
-                this.roomId = data.roomId;
-                this.currentRoomId = data.roomId;
-                this.isHost = true;
-                
-                this.players.set(this.playerId, data.player);
-                
-                resolve({
-                    success: true,
-                    playerId: this.playerId,
-                    isHost: true,
-                    roomId: data.roomId
-                });
-            });
-
-            this.setupEventListeners();
-            this.setupErrorHandling(reject);
-        });
-    }
-
-    joinRoom(roomId, playerName) {
+    connect(roomId, playerName) {
         return new Promise((resolve, reject) => {
             this.socket = io();
             this.roomId = roomId;
@@ -67,96 +33,61 @@ export class NetworkGame {
                     roomId: roomId
                 });
             });
-
-            this.socket.on('join_error', (data) => {
-                reject(new Error(data.message));
+            
+            this.socket.on('player_joined', (data) => {
+                this.players.clear();
+                data.players.forEach(player => {
+                    this.players.set(player.id, player);
+                    if (player.id === this.playerId) {
+                        this.isHost = player.isHost;
+                    }
+                });
+                
+                if (this.onPlayersUpdate) {
+                    this.onPlayersUpdate(Array.from(this.players.values()));
+                }
             });
 
-            this.setupEventListeners();
-            this.setupErrorHandling(reject);
-        });
-    }
+            this.socket.on('room_state', (data) => {
+                if (this.onRoomState) {
+                    this.onRoomState(data);
+                }
+            });
 
-    setupEventListeners() {
-        this.socket.on('player_joined', (data) => {
-            this.players.clear();
-            data.players.forEach(player => {
-                this.players.set(player.id, player);
-                if (player.id === this.playerId) {
-                    this.isHost = player.isHost;
+            this.socket.on('game_object_added', (data) => {
+                if (this.onGameObjectAdded) {
+                    this.onGameObjectAdded(data.object);
+                }
+            });
+
+            this.socket.on('game_object_removed', (data) => {
+                if (this.onGameObjectRemoved) {
+                    this.onGameObjectRemoved(data.objectId);
+                }
+            });
+
+            this.socket.on('game_object_updated', (data) => {
+                if (this.onGameObjectUpdated) {
+                    this.onGameObjectUpdated(data.object);
+                }
+            });
+
+            this.socket.on('clear_game_field', (data) => {
+                if (this.onClearGameField) {
+                    this.onClearGameField();
                 }
             });
             
-            if (this.onPlayersUpdate) {
-                this.onPlayersUpdate(Array.from(this.players.values()));
-            }
+            this.socket.on('connect_error', (error) => {
+                reject(error);
+            });
+            
+            setTimeout(() => {
+                if (!this.isConnected) {
+                    reject(new Error('Connection timeout'));
+                }
+            }, 5000);
         });
-
-        this.socket.on('room_state', (data) => {
-            if (this.onRoomState) {
-                this.onRoomState(data);
-            }
-        });
-
-        this.socket.on('game_object_added', (data) => {
-            if (this.onGameObjectAdded) {
-                this.onGameObjectAdded(data.object);
-            }
-        });
-
-        this.socket.on('game_object_removed', (data) => {
-            if (this.onGameObjectRemoved) {
-                this.onGameObjectRemoved(data.objectId);
-            }
-        });
-
-        this.socket.on('game_object_updated', (data) => {
-            if (this.onGameObjectUpdated) {
-                this.onGameObjectUpdated(data.object);
-            }
-        });
-
-        this.socket.on('clear_game_field', (data) => {
-            if (this.onClearGameField) {
-                this.onClearGameField();
-            }
-        });
-
-        this.socket.on('game_started', (data) => {
-            if (this.onGameStarted) {
-                this.onGameStarted(data);
-            }
-        });
-
-        this.socket.on('movie_reveal', (data) => {
-            if (this.onMovieReveal) {
-                this.onMovieReveal(data);
-            }
-        });
-
-        this.socket.on('chat_message', (data) => {
-            if (this.onChatMessage) {
-                this.onChatMessage(data);
-            }
-        });
-
-        this.socket.on('player_scored', (data) => {
-            if (this.onPlayerScored) {
-                this.onPlayerScored(data);
-            }
-        });
-    }
-
-    setupErrorHandling(reject) {
-        this.socket.on('connect_error', (error) => {
-            reject(error);
-        });
-        
-        setTimeout(() => {
-            if (!this.isConnected) {
-                reject(new Error('Connection timeout'));
-            }
-        }, 5000);
     }
 
     disconnect() {
@@ -167,6 +98,7 @@ export class NetworkGame {
         this.players.clear();
     }
 
+    // Game object synchronization
     sendGameObjectAdded(object) {
         if (!this.isConnected || !this.socket) return;
         this.socket.emit('game_object_added', { object });
@@ -187,6 +119,7 @@ export class NetworkGame {
         this.socket.emit('clear_game_field', {});
     }
 
+    // Chat and game management
     sendMessage(message) {
         if (!this.isConnected || !this.socket) return;
         this.socket.emit('chat_message', { message });
@@ -202,10 +135,36 @@ export class NetworkGame {
         this.socket.emit('correct_answer', { playerId });
     }
 
+    // Event listeners
+    onMessage(callback) {
+        if (this.socket) {
+            this.socket.on('chat_message', (data) => {
+                callback(data);
+            });
+        }
+    }
+
     onPlayersUpdate(callback) {
         this.onPlayersUpdate = callback;
     }
 
+    onGameStart(callback) {
+        if (this.socket) {
+            this.socket.on('game_started', (data) => {
+                callback(data);
+            });
+        }
+    }
+
+    onMovieReveal(callback) {
+        if (this.socket) {
+            this.socket.on('movie_reveal', (data) => {
+                callback(data);
+            });
+        }
+    }
+
+    // Game object synchronization callbacks
     onRoomState(callback) {
         this.onRoomState = callback;
     }
@@ -226,22 +185,7 @@ export class NetworkGame {
         this.onClearGameField = callback;
     }
 
-    onGameStarted(callback) {
-        this.onGameStarted = callback;
-    }
-
-    onMovieReveal(callback) {
-        this.onMovieReveal = callback;
-    }
-
-    onChatMessage(callback) {
-        this.onChatMessage = callback;
-    }
-
-    onPlayerScored(callback) {
-        this.onPlayerScored = callback;
-    }
-
+    // Player management
     updatePlayerScore(playerId, points) {
         const player = this.players.get(playerId);
         if (player) {
