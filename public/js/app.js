@@ -25,72 +25,74 @@ class EmojinariumGame {
     }
 
     initEventListeners() {
+        // Drag and drop
         this.gameField.addEventListener('dragover', this.handleDragOver.bind(this));
         this.gameField.addEventListener('drop', this.handleDrop.bind(this));
         this.gameField.addEventListener('click', this.handleDoubleClick.bind(this));
         this.gameField.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
 
+        // Keyboard
         document.addEventListener('keydown', this.handleKeydown.bind(this));
 
+        // Modal
         this.uiManager.initModal(
-            (playerName, statusElement) => this.createRoom(playerName, statusElement),
-            (roomId, playerName, statusElement) => this.joinRoom(roomId, playerName, statusElement),
-            (playerName) => this.startSingleGame(playerName)
+            this.createRoom.bind(this),
+            this.joinRoom.bind(this),
+            this.startSingleGame.bind(this)
         );
 
+        // Chat
         this.uiManager.initChat(this.sendChatMessage.bind(this));
+
+        // Game controls
+        this.uiManager.initGameControls(
+            this.generateNewMovie.bind(this),
+            this.clearGameField.bind(this),
+            this.disconnectGame.bind(this)
+        );
     }
 
-    async createRoom(playerName, statusElement) {
-        try {
-            const result = await this.network.createRoom(playerName);
+    // Network methods
+    async createRoom(roomId, playerName, statusElement, roomIdInput) {
+        const result = await this.network.connect(roomId, playerName);
+        
+        if (result.success) {
+            this.isHost = true;
+            this.gameMode = 'network';
             
-            if (result.success) {
-                this.isHost = true;
-                this.gameMode = 'network';
-                
-                this.uiManager.showRoomCreated(result.roomId, statusElement);
-                localStorage.setItem('lastRoomId', result.roomId);
-                
-                setTimeout(() => {
-                    this.startNetworkGame();
-                }, 2000);
-            }
-        } catch (error) {
-            throw error;
+            statusElement.textContent = `Комната создана! ID: ${roomId}`;
+            statusElement.className = 'status-message status-connected';
+            
+            roomIdInput.disabled = true;
+            localStorage.setItem('lastRoomId', roomId);
+            
+            this.uiManager.showCopyRoomIdButton(roomId, statusElement);
+            
+            setTimeout(() => {
+                this.startNetworkGame();
+            }, 2000);
         }
     }
 
     async joinRoom(roomId, playerName, statusElement) {
-        try {
-            const result = await this.network.joinRoom(roomId, playerName);
+        const result = await this.network.connect(roomId, playerName);
+        
+        if (result.success) {
+            this.isHost = false;
+            this.gameMode = 'network';
             
-            if (result.success) {
-                this.isHost = false;
-                this.gameMode = 'network';
-                
-                statusElement.textContent = 'Успешно присоединились!';
-                statusElement.className = 'status-message status-connected';
-                localStorage.setItem('lastRoomId', roomId);
-                
-                setTimeout(() => {
-                    this.startNetworkGame();
-                }, 1000);
-            }
-        } catch (error) {
-            throw error;
+            statusElement.textContent = 'Успешно присоединились!';
+            statusElement.className = 'status-message status-connected';
+            localStorage.setItem('lastRoomId', roomId);
+            
+            setTimeout(() => {
+                this.startNetworkGame();
+            }, 1000);
         }
     }
 
     startNetworkGame() {
         this.uiManager.showScreen('game');
-        
-        this.uiManager.initGameControls(
-            () => this.generateNewMovie(),
-            () => this.clearGameField(),
-            () => this.disconnectGame(),
-            this.isHost
-        );
         
         if (this.isHost) {
             this.uiManager.toggleEmojiMenu(true);
@@ -108,7 +110,7 @@ class EmojinariumGame {
         this.updatePlayersList();
     }
 
-    startSingleGame(playerName = 'Игрок') {
+    startSingleGame() {
         this.gameMode = 'single';
         this.isHost = true;
         
@@ -116,42 +118,43 @@ class EmojinariumGame {
         this.uiManager.toggleEmojiMenu(true);
         this.uiManager.toggleChat(false);
         
-        this.uiManager.initGameControls(
-            () => this.generateNewMovie(),
-            () => this.clearGameField(),
-            () => this.disconnectGame(),
-            true
-        );
-        
         this.generateNewMovie();
         this.uiManager.initSections(this.gameEngine.emojiCategories, this);
     }
 
     initNetworkListeners() {
-        this.network.onChatMessage((data) => {
-            this.uiManager.addChatMessage(data.playerName, data.message, data.isCorrect);
+        // Chat messages
+        this.network.onMessage((data) => {
+            if (data.type === 'chat_message') {
+                this.uiManager.addChatMessage(data.playerName, data.message, data.isCorrect);
+            }
         });
 
+        // Players updates
         this.network.onPlayersUpdate((players) => {
             this.updatePlayersList();
         });
 
-        this.network.onGameStarted((data) => {
+        // Game start
+        this.network.onGameStart((data) => {
             this.uiManager.addChatMessage('Система', data.message, true);
             this.createPlayerPlaceholder();
         });
 
+        // Movie reveal (only for host)
         this.network.onMovieReveal((movie) => {
             this.currentMovie = movie;
             this.uiManager.updateMovieDisplay(movie);
             this.uiManager.showLoading(false);
         });
 
+        // Room state synchronization
         this.network.onRoomState((data) => {
             if (data.movie && !this.isHost) {
                 this.currentMovie = data.movie;
             }
             
+            // Restore game objects
             if (data.gameObjects && data.gameObjects.length > 0) {
                 data.gameObjects.forEach(obj => {
                     this.gameEngine.createGameObjectFromData(obj, this.isHost, this.network);
@@ -159,6 +162,7 @@ class EmojinariumGame {
             }
         });
 
+        // Game object synchronization
         this.network.onGameObjectAdded((object) => {
             this.gameEngine.createGameObjectFromData(object, this.isHost, this.network);
         });
@@ -187,13 +191,9 @@ class EmojinariumGame {
         this.network.onClearGameField(() => {
             this.gameEngine.clearGameField(this.isHost, this.network);
         });
-
-        this.network.onPlayerScored((data) => {
-            this.network.updatePlayerScore(data.playerId, 1);
-            this.updatePlayersList();
-        });
     }
 
+    // Game methods
     async generateNewMovie() {
         this.uiManager.showLoading(true);
         try {
@@ -232,7 +232,7 @@ class EmojinariumGame {
             { title: "Славные парни", year: "1990" },
             { title: "Пролетая над гнездом кукушки", year: "1975" },
             { title: "Семь", year: "1995" },
-            { title: "Молчаление ягнят", year: "1991" }
+            { title: "Молчание ягнят", year: "1991" }
         ];
 
         const randomIndex = Math.floor(Math.random() * topMovies.length);
@@ -255,6 +255,7 @@ class EmojinariumGame {
         
         const randomIndex = Math.floor(Math.random() * fallbackMovies.length);
         this.currentMovie = fallbackMovies[randomIndex];
+        
         this.uiManager.updateMovieDisplay(this.currentMovie);
     }
 
@@ -273,6 +274,7 @@ class EmojinariumGame {
         }
     }
 
+    // Event handlers
     handleDragStart(e) {
         if (e.target.classList.contains('menu-item')) {
             const item = e.target;
@@ -310,8 +312,12 @@ class EmojinariumGame {
     handleDrop(e) {
         e.preventDefault();
         const emoji = e.dataTransfer.getData('text/plain');
-        if (emoji) {
-            this.gameEngine.createGameObject(emoji, e.clientX, e.clientY, this.isHost, this.network);
+        this.gameEngine.createGameObject(emoji, e.clientX, e.clientY, this.isHost, this.network);
+    }
+
+    handleWheel(e) {
+        if (e.target.classList.contains('game-object')) {
+            e.preventDefault();
         }
     }
 
@@ -324,18 +330,13 @@ class EmojinariumGame {
         }
     }
 
-    handleWheel(e) {
-        if (e.target.classList.contains('game-object')) {
-            e.preventDefault();
-        }
-    }
-
     handleKeydown(e) {
         if (e.key === 'Escape' && this.uiManager.currentExpandedSection) {
             this.uiManager.closeSection(this.uiManager.currentExpandedSection);
         }
     }
 
+    // Chat methods
     sendChatMessage(message) {
         if (this.gameMode === 'network') {
             this.network.sendMessage(message);
@@ -366,6 +367,7 @@ class EmojinariumGame {
     }
 }
 
+// Initialize the game when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     new EmojinariumGame();
 });
