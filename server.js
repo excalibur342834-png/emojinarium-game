@@ -256,68 +256,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// Добавьте в server.js после других socket.on обработчиков
-
-socket.on('add_object', (data) => {
-  const player = players.get(socket.id);
-  if (!player) return;
-  
-  const room = rooms.get(player.roomId);
-  if (!room) return;
-  
-  // Отправляем объект всем игрокам в комнате, кроме отправителя
-  socket.to(player.roomId).emit('object_added', {
-    id: data.id,
-    emoji: data.emoji,
-    x: data.x,
-    y: data.y,
-    fontSize: data.fontSize,
-    width: data.width,
-    height: data.height,
-    rotation: data.rotation
-  });
-});
-
-socket.on('update_object', (data) => {
-  const player = players.get(socket.id);
-  if (!player) return;
-  
-  const room = rooms.get(player.roomId);
-  if (!room) return;
-  
-  socket.to(player.roomId).emit('object_updated', {
-    id: data.id,
-    x: data.x,
-    y: data.y,
-    fontSize: data.fontSize,
-    width: data.width,
-    height: data.height,
-    rotation: data.rotation
-  });
-});
-
-socket.on('remove_object', (data) => {
-  const player = players.get(socket.id);
-  if (!player) return;
-  
-  const room = rooms.get(player.roomId);
-  if (!room) return;
-  
-  socket.to(player.roomId).emit('object_removed', {
-    id: data.id
-  });
-});
-
-socket.on('clear_objects', (data) => {
-  const player = players.get(socket.id);
-  if (!player) return;
-  
-  const room = rooms.get(player.roomId);
-  if (!room) return;
-  
-  socket.to(player.roomId).emit('objects_cleared');
-});
-
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
